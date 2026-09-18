@@ -25,6 +25,7 @@ export function registerWaveformTools(server: McpServer): void {
       const maxPts = max_points || 1000;
 
       try {
+        await connection.checkChannel(channel);
         // Query channel parameters for voltage reconstruction
         const [vdivStr, ofstStr, tdivStr, saraStr, trdlStr] = await Promise.all([
           connection.query(`${channel}:VDIV?`),

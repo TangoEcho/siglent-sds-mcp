@@ -75,6 +75,9 @@ export function registerAcquisitionTools(server: McpServer): void {
         }
 
         if (trigger_source !== undefined) {
+          if (/^C\d$/.test(trigger_source)) {
+            await connection.checkChannel(trigger_source);
+          }
           await connection.sendCommand(`TRSE EDGE,SR,${trigger_source}`);
           commandsSent.push(`TRSE EDGE,SR,${trigger_source}`);
         }

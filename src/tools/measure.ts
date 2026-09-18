@@ -47,6 +47,7 @@ export function registerMeasureTools(server: McpServer): void {
     { readOnlyHint: true },
     async ({ channel, parameter }) => {
       try {
+        await connection.checkChannel(channel);
         // Install the measurement
         await connection.sendCommand(`PACU ${parameter},${channel}`);
 
@@ -95,6 +96,7 @@ export function registerMeasureTools(server: McpServer): void {
     { readOnlyHint: false },
     async ({ channel, parameter, action }) => {
       try {
+        await connection.checkChannel(channel);
         switch (action) {
           case "on":
             await connection.sendCommand(`PACU ${parameter},${channel}`);

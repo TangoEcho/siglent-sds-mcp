@@ -23,6 +23,7 @@ const { mockConnection, defaultQuery } = vi.hoisted(() => {
       getConnectionInfo: vi.fn(() => "192.168.1.126:5025"),
       connect: vi.fn(async () => "Siglent,SDS1104X-E,SDS1ECAX12345,8.2.6.1.37R1"),
       disconnect: vi.fn(),
+      checkChannel: vi.fn(async () => {}),
       sendCommand: vi.fn(async () => {}),
       query: vi.fn(defaultQuery),
       queryBinary: vi.fn(async () => Buffer.alloc(0)),
