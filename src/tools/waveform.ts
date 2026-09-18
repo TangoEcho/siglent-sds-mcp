@@ -26,24 +26,32 @@ export function registerWaveformTools(server: McpServer): void {
 
       try {
         // Query channel parameters for voltage reconstruction
-        const [vdivStr, ofstStr, tdivStr, saraStr] = await Promise.all([
+        const [vdivStr, ofstStr, tdivStr, saraStr, trdlStr] = await Promise.all([
           connection.query(`${channel}:VDIV?`),
           connection.query(`${channel}:OFST?`),
           connection.query("TDIV?"),
           connection.query("SARA?"),
+          connection.query("TRDL?"),
         ]);
 
         const vdiv = parseFloat(vdivStr);
         const ofst = parseFloat(ofstStr);
         const tdiv = parseFloat(tdivStr);
         const sara = parseSampleRate(saraStr);
+        const trdl = parseFloat(trdlStr);
 
-        if (isNaN(vdiv) || isNaN(ofst) || isNaN(tdiv) || isNaN(sara)) {
+        if (
+          isNaN(vdiv) ||
+          isNaN(ofst) ||
+          isNaN(tdiv) ||
+          isNaN(sara) ||
+          isNaN(trdl)
+        ) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Error parsing scope parameters: vdiv=${vdivStr}, ofst=${ofstStr}, tdiv=${tdivStr}, sara=${saraStr}`,
+                text: `Error parsing scope parameters: vdiv=${vdivStr}, ofst=${ofstStr}, tdiv=${tdivStr}, sara=${saraStr}, trdl=${trdlStr}`,
               },
             ],
             isError: true,
@@ -69,7 +77,10 @@ export function registerWaveformTools(server: McpServer): void {
         // Generate time values
         const totalPoints = voltages.length;
         const timeInterval = 1 / sara;
-        const startTime = -(tdiv * 14) / 2;
+        // Time 0 is the trigger point. The programming guide's formula
+        // -(tdiv * 14 / 2) assumes zero delay; a delay of TRDL (negative =
+        // trigger shown left of centre) shifts the whole record by -TRDL.
+        const startTime = -(tdiv * 14) / 2 - trdl;
 
         // Downsample if needed
         let step = 1;
