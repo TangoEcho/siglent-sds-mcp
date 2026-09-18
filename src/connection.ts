@@ -3,9 +3,14 @@ import * as net from "node:net";
 const DEFAULT_PORT = 5025;
 const DEFAULT_TIMEOUT = 5000;
 const BINARY_TIMEOUT = 30000;
+// Gap between a command and its *OPC? so they reach the scope as separate
+// reads; a write callback alone doesn't stop the receiver coalescing them.
+const OPC_GAP_MS = 20;
 
 interface QueuedQuery {
   cmd: string;
+  /** Command written (and flushed) before `cmd`, e.g. a setter paced by *OPC? */
+  pre?: string;
   binary: boolean;
   timeout: number;
   resolve: (value: Buffer) => void;
@@ -109,12 +114,15 @@ export class SiglentConnection {
 
   async sendCommand(cmd: string): Promise<void> {
     this.ensureConnected();
-    return new Promise((resolve, reject) => {
-      this.socket!.write(cmd + "\n", (err) => {
-        if (err) reject(new Error(`Write failed: ${err.message}`));
-        else resolve();
-      });
-    });
+    // The scope silently drops commands that arrive while it is still applying
+    // the previous one (e.g. a VDIV change takes ~250ms on SDS1202X-E fw 1.3.27).
+    // Follow each command with *OPC? and wait for its reply so commands are
+    // paced by the scope itself. Going through the query queue also keeps the
+    // pair from interleaving with concurrent queries.
+    // The two must be separate writes: if "*OPC?" arrives in the same packet
+    // the scope mis-parses the command's numeric argument and clamps it
+    // (e.g. "TDIV 50US" becomes 1ns).
+    await this.enqueueQuery("*OPC?", false, DEFAULT_TIMEOUT, cmd);
   }
 
   async query(cmd: string, timeout: number = DEFAULT_TIMEOUT): Promise<string> {
@@ -134,10 +142,11 @@ export class SiglentConnection {
   private enqueueQuery(
     cmd: string,
     binary: boolean,
-    timeout: number
+    timeout: number,
+    pre?: string
   ): Promise<Buffer> {
     return new Promise<Buffer>((resolve, reject) => {
-      this.queryQueue.push({ cmd, binary, timeout, resolve, reject });
+      this.queryQueue.push({ cmd, pre, binary, timeout, resolve, reject });
       this.drainQueue();
     });
   }
@@ -146,7 +155,8 @@ export class SiglentConnection {
     if (this.queryRunning || this.queryQueue.length === 0) return;
     this.queryRunning = true;
 
-    const { cmd, binary, timeout, resolve, reject } = this.queryQueue.shift()!;
+    const { cmd, pre, binary, timeout, resolve, reject } =
+      this.queryQueue.shift()!;
 
     this.expectedBinaryLength = null;
     this.binaryDataStart = 0;
@@ -167,21 +177,33 @@ export class SiglentConnection {
     this.responseTimer = setTimeout(() => {
       this.clearPending();
       const err = new Error(
-        `${binary ? "Binary query" : "Query"} timeout after ${timeout}ms for command: ${cmd}`
+        `${binary ? "Binary query" : "Query"} timeout after ${timeout}ms for command: ${pre ? `${pre} (${cmd})` : cmd}`
       );
       this.queryRunning = false;
       reject(err);
       this.drainQueue();
     }, timeout);
 
-    this.socket!.write(cmd + "\n", (err) => {
-      if (err) {
-        this.clearPending();
-        this.queryRunning = false;
-        reject(new Error(`Write failed: ${err.message}`));
-        this.drainQueue();
-      }
-    });
+    const writeLine = (line: string, next?: () => void): void => {
+      this.socket!.write(line + "\n", (err) => {
+        if (err) {
+          this.clearPending();
+          this.queryRunning = false;
+          reject(new Error(`Write failed: ${err.message}`));
+          this.drainQueue();
+        } else {
+          next?.();
+        }
+      });
+    };
+
+    if (pre !== undefined) {
+      writeLine(pre, () =>
+        setTimeout(() => this.socket && writeLine(cmd), OPC_GAP_MS)
+      );
+    } else {
+      writeLine(cmd);
+    }
   }
 
   private setupSocketListeners(): void {
